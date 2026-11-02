@@ -71,7 +71,7 @@ const DEF={
   IC:{n:'IC (DIP)',pins:14,w:3,v:'7400'}
 };
 const PRE=[['VCC','#e53935'],['GND','#111111'],['3.3V','#fb8c00'],['5V','#fdd835'],['-V','#1e88e5'],['신호1','#43a047'],['신호2','#00acc1'],['신호3','#8e24aa']];
-const HINT={select:'부품·점퍼선·납땜선을 어느 면에서든 선택합니다. Shift+클릭/드래그 추가 선택 · Ctrl+클릭 추가/제외 · Ctrl+C/X/V 복사 · R 회전 · Delete 삭제 · 빈 곳 드래그 이동',
+const HINT={select:'부품·점퍼선·납땜선을 어느 면에서든 선택합니다. Shift+클릭/드래그 추가 선택 · Ctrl+클릭 추가/제외 · Ctrl+C/X/V 복사 · Alt+드래그 연결 해제 이동 · R 회전 · Delete 삭제 · 빈 곳 드래그 이동',
 wire:'구멍을 차례로 클릭해 선을 그립니다. 더블클릭 / Enter / 우클릭으로 끝, Esc 취소. 양면 기판은 지금 보는 면에, 단면 기판은 납땜면에 그려지고 반대면에서는 점선으로 보입니다',
 jumper:'시작 구멍과 끝 구멍을 클릭합니다. 선택 도구로 가운데 점을 끌면 자유롭게 휘어집니다',
 label:'고른 색을 구멍에 클릭하면 연결된 선 및 부품 핀 전체가 그 색이 됩니다. "지우기"로 해제',
@@ -325,10 +325,32 @@ function rotSel(){if(!sels.length)return;const it=selItems(),e=ext(it);if(!e)ret
  it.labels.forEach(([k])=>delete st.labels[k]);const ls=sels.filter(q=>q.k==='label');nl.forEach(([k,l],i)=>{st.labels[k]=l;ls[i].id=k});
  const sg2=sels.map(q=>q.k+q.id).join();commit();gpiv={s:sg2,p:[px,py]};props()}
 /* 그룹 이동 / 영역 선택 */
-function startGrp(wx,wy){const it=selItems();drag={t:'grp',sx:wx,sy:wy,dx:0,dy:0,e:ext(it),moved:false,o:{parts:it.parts.map(p=>({p,x:p.x,y:p.y})),wires:it.wires.map(w=>({w,pts:w.pts})),jumpers:it.jumpers.map(j=>({j,a:j.a,b:j.b,c:j.c})),
- labels:it.labels.map(([k,l])=>({s:sels.find(q=>q.k==='label'&&q.id===k),k,l}))}}}
+function startGrp(wx,wy,alt){const it=selItems(),K=q=>q.x+','+q.y,sP=new Set(it.parts),sW=new Set(it.wires),sJ=new Set(it.jumpers),anch=new Set();
+ /* 선택 밖 항목이 닿아 있는 구멍 = 고정점 */
+ st.parts.forEach(p=>{if(!sP.has(p))pinsW(p).forEach(([x,y])=>anch.add(x+','+y))});
+ st.wires.forEach(w=>{if(!sW.has(w))w.pts.forEach(q=>anch.add(K(q)))});
+ st.jumpers.forEach(j=>{if(!sJ.has(j)){anch.add(K(j.a));anch.add(K(j.b))}});
+ const wires=it.wires.map(w=>{let pts=w.pts,free=pts.map(q=>alt||!anch.has(K(q)));
+  if(!free.some(Boolean)){let bi=1,bl=-1;for(let i=1;i<pts.length;i++){const l=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y);if(l>bl){bl=l;bi=i}}
+   const a=pts[bi-1],b=pts[bi],mx=Math.round((a.x+b.x)/2),my=Math.round((a.y+b.y)/2);
+   if(!((mx===a.x&&my===a.y)||(mx===b.x&&my===b.y))){pts=[...pts.slice(0,bi),{x:mx,y:my},...pts.slice(bi)];free=[...free.slice(0,bi),true,...free.slice(bi)]}}
+  return{w,pts,free}});
+ /* 움직이는 점 → 여기에 닿은 선택 밖 선/점퍼선 끝이 따라와 늘어남 */
+ const M=new Set();it.parts.forEach(p=>pinsW(p).forEach(([x,y])=>M.add(x+','+y)));it.jumpers.forEach(j=>{M.add(K(j.a));M.add(K(j.b))});
+ wires.forEach(a=>a.pts.forEach((q,i)=>{if(a.free[i])M.add(K(q))}));
+ const sw=[],sj=[];
+ if(!alt){st.wires.forEach(w=>{if(sW.has(w))return;const f=w.pts.map(q=>M.has(K(q)));if(f.some(Boolean))sw.push({w,pts:w.pts,free:f})});
+  st.jumpers.forEach(j=>{if(sJ.has(j))return;const ma=M.has(K(j.a)),mb=M.has(K(j.b));if(ma||mb)sj.push({j,a:j.a,b:j.b,c:j.c,ma,mb})})}
+ const mp=[];it.parts.forEach(p=>pinsW(p).forEach(q=>mp.push(q)));it.jumpers.forEach(j=>mp.push([j.a.x,j.a.y],[j.b.x,j.b.y]));it.labels.forEach(([k])=>mp.push(k.split(',').map(Number)));
+ [...wires,...sw].forEach(a=>a.pts.forEach((q,i)=>{if(a.free[i])mp.push([q.x,q.y])}));sj.forEach(a=>{if(a.ma)mp.push([a.a.x,a.a.y]);if(a.mb)mp.push([a.b.x,a.b.y])});
+ const X=mp.map(q=>q[0]),Y=mp.map(q=>q[1]);
+ drag={t:'grp',sx:wx,sy:wy,dx:0,dy:0,e:mp.length?[Math.min(...X),Math.min(...Y),Math.max(...X),Math.max(...Y)]:null,moved:false,o:{parts:it.parts.map(p=>({p,x:p.x,y:p.y})),wires,sw,sj,
+  jumpers:it.jumpers.map(j=>({j,a:j.a,b:j.b,c:j.c})),labels:it.labels.map(([k,l])=>({s:sels.find(q=>q.k==='label'&&q.id===k),k,l}))}}}
 function applyGrp(d,dx,dy){const o=d.o,mv=q=>({x:q.x+dx,y:q.y+dy});
- o.parts.forEach(a=>{a.p.x=a.x+dx;a.p.y=a.y+dy;delete a.p.vc});o.wires.forEach(a=>a.w.pts=a.pts.map(mv));o.jumpers.forEach(a=>{a.j.a=mv(a.a);a.j.b=mv(a.b);a.j.c=mv(a.c)});
+ o.parts.forEach(a=>{a.p.x=a.x+dx;a.p.y=a.y+dy;delete a.p.vc});
+ [...o.wires,...o.sw].forEach(a=>a.w.pts=a.pts.map((q,i)=>a.free[i]?mv(q):q));
+ o.jumpers.forEach(a=>{a.j.a=mv(a.a);a.j.b=mv(a.b);a.j.c=mv(a.c)});
+ o.sj.forEach(a=>{const f=((a.ma?1:0)+(a.mb?1:0))/2;a.j.a=a.ma?mv(a.a):a.a;a.j.b=a.mb?mv(a.b):a.b;a.j.c={x:a.c.x+dx*f,y:a.c.y+dy*f}});
  o.labels.forEach(a=>delete st.labels[a.k]);o.labels.forEach(a=>{const[x,y]=a.k.split(',').map(Number),k=(x+dx)+','+(y+dy);st.labels[k]={...a.l};a.s.id=k});netC=null}
 function boxSel(d){const x0=Math.min(d.x0,d.x1),x1=Math.max(d.x0,d.x1),y0=Math.min(d.y0,d.y1),y1=Math.max(d.y0,d.y1),tc=boxMode==='touch',
  ins=q=>q[0]>=x0&&q[0]<=x1&&q[1]>=y0&&q[1]<=y1,test=a=>tc?a.some(ins):a.every(ins),out=[];
@@ -369,7 +391,7 @@ function down(wx,wy){
   if(hit){
    if(ctl){const i=sels.findIndex(q=>q.k===hit.k&&q.id===hit.id);if(i<0)sels.push(hit);else sels.splice(i,1);props();draw();return}
    if(!isSel(hit.k,hit.id))sels=[hit];
-   startGrp(wx,wy);props();draw();return}
+   startGrp(wx,wy,ev.altKey);props();draw();return}
   if(!ctl)sels=[];props();drag={t:'pan',sx:ev.offsetX,sy:ev.offsetY,ox,oy};draw();return}
  if(mode==='paste'){doPaste(wx,wy);return}
  if(mode==='place'){const p={...placeAt(wx,wy),id:st.nid++};st.parts.push(p);commit();return}
